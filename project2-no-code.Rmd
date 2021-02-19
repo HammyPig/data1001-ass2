@@ -1,0 +1,322 @@
+---
+title: "Which Factors Associate Towards Higher Listing Prices On Airbnb"
+author: "500483529"
+subtitle: "Project 2"
+date: "University of Sydney | DATA1001 | April 2020"
+output:
+  html_document:
+    fig_caption: yes
+    number_sections: yes
+    self_contained: yes
+    theme: united
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    code_folding: hide
+---
+
+<br>
+
+# Executive Summary
+The aim of this report is to determine which factors associated towards higher listing prices (to a reasonable degree, not a margin of a couple dollars or cents) on the online marketplace of Airbnb. 
+
+The main discoveries are that the following factors lean towards higher prices:
+
+- A location which is well-known for tourism or placed in a wealthy suburb (corroborating with current research [2]).
+- Listing the room type as an entire home/apartment.
+- Higher accommodation size (to a maximum of 8).
+
+Some other discoveries were:
+
+- More amenities (on the extreme end) slightly increases the potential **minimum** listing price, yet, does not actively affect the vast majority of cases (going against past research [1][3][4]).
+- Higher ratings have minimal effect on listing price (going against past research [5]), however, higher ratings do increase the **maximum** listing price possible.
+- Property type does not consistently affect listing price.
+
+*Note: all sections contain a summary which provides the main takeaway, any extra information can be read optionally to expand upon claims or answer concerns.*
+
+<br>
+
+<br>
+
+# Full Report
+
+<br>
+
+## Initial Data Analysis (IDA)
+The Airbnb dataset was sourced from the [listings.csv]("http://www.maths.usyd.edu.au/u/UG/JM/DATA1001/r/current/projects/2020data/listings.csv") file. The dataset rows consists of over 40000 unique entries of Airbnb listings, each with a maximum of 106 variable columns. These variables are structured both as quantitative and qualitative data (in the form of words, lists and numerical values).
+
+As previously mentioned, only a **maximum** of 106 variables were found, with one limitation being many data entries left unfulfilled. Another limitation specifically regarding quantitative data was the presence of spelling errors and slight word variations, inevitably making analysis more tedious.
+
+Despite these issues, rather than discarding these faulty or unfulfilled entries, measures were put into place to combat these issues; variables were assessed on their consistency and reliability, with findings based on those in greater quality.
+
+Additionally, other variables with strange structural types were restructured to suit their more natural state (e.g. price was converted from originally words to numerical values, while amenities were converted from a list to a numerical value of how many amenities were provided).
+
+<br>
+
+## Briefing
+To access which factors associated with higher prices, the first step was to access which areas to cover; price will be compared to three primary areas: location, property specifics, and quality.
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+# Packages
+library("tidyverse")
+library("RColorBrewer")
+library("quantreg")
+library("hexbin")
+library("ggpubr")
+
+# Initialise variables
+airbnb_orig = read.csv("data/listings.csv")
+airbnb = airbnb_orig
+```
+
+## Location
+
+```{r, results='hide', warning=FALSE, echo=FALSE}
+airbnb$price = as.numeric(gsub('[$,]', '', airbnb$price)) # Converting to numeric values
+
+# Colour Creator
+create_colour = function(col, n, reverse=F) {
+  new_palette = colorRampPalette(brewer.pal(8, col))(n)
+  if (reverse) {
+    return(rev(new_palette))
+  }
+  return(new_palette)
+}
+
+# General use function which checks variable reliability
+check_var = function(var) {
+  print(paste("No. of Variables =",length(levels(var))))
+  print(paste("Entries =", dim(filter(airbnb, var != ""))[1], "of", dim(airbnb)[1]))
+  print("-------------------------")
+  #print(levels(var))
+}
+
+# Finding best variable (neighbourhood_cleansed was chosen to be most reliant)
+paste("Total entries:", dim(airbnb)[1])
+print("-------------------------")
+print("City")
+check_var(airbnb$city)
+print("Smart Location")
+check_var(airbnb$smart_location)
+print("Neighbourhood")
+check_var(airbnb$neighbourhood)
+print("Neighbourhood Cleansed")
+check_var(airbnb$neighbourhood_cleansed)
+
+# Reorder from smallest median to highest
+sorted_neighbourhoods = reorder(airbnb$neighbourhood_cleansed, airbnb$price, FUN = median)
+
+# Median Suburb Price
+ggplot(airbnb, aes(x = sorted_neighbourhoods, y = price, fill = sorted_neighbourhoods)) + geom_boxplot() + labs(y = "Price", fill = "Suburb") + theme_classic() + theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) + scale_fill_manual(values = create_colour("YlGn", length(levels(sorted_neighbourhoods)))) + coord_cartesian(ylim = c(0, 1750)) + ggtitle("Figure 1: Suburb Pricing")
+
+# Suburbs
+ggplot(airbnb, aes(x = sorted_neighbourhoods, fill = sorted_neighbourhoods)) + geom_bar() + labs(fill = "Suburb") + theme_classic() + theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) + scale_fill_manual(values = create_colour("YlGn", length(levels(sorted_neighbourhoods)))) + ggtitle("Figure 2: Amount of Listings per Suburb")
+```
+
+**Summary: There is a clear connection between wealthy/tourist suburbs and higher listing.**
+
+As seen in **figure 1**, there is a clear order to the pricing of different suburbs, with an immediate observation being well-known tourist/wealthy suburbs being on the higher end of the spectrum, with the latter being on the lower end.
+
+Pashaj (2018) corroborates, claiming location is "important as a destination type...", with higher prices connecting with tourist attractions and/or fancy views. [2]
+
+Nevertheless, the question remains of whether the price increase is due solely to the location of the suburb **OR** due to confounding reasons? The most immediate cause could be the amount of listings per suburb perhaps skewing the data, yet, as per **figure 2**, there is no obvious evidence to support this. Could wealthy suburbs simply have bigger rooms or fancier houses, therefore inflating listing prices? This moves us onto the next topic...
+
+<br>
+
+## Property
+
+<br>
+
+### Property Type
+```{r, results='hide', warning=FALSE, echo=FALSE}
+# Property Type -------------------------
+check_var(airbnb$property_type)
+
+# Create table
+sorted_table = sort(table(airbnb$property_type))
+
+# Group least common variables
+other = grep("Other", names(sorted_table))
+other_group = sorted_table[1:other]
+
+# Goal for data
+cut_table = sorted_table[other:length(sorted_table)]
+cut_table[1] = sum(other_group) # Sum uncommon data as 'Other'
+
+# Change real data to fit these parameters
+for (lev in names(other_group)) {
+  levels(airbnb$property_type)[levels(airbnb$property_type)==lev] = "Other"
+}
+
+# Confirmed the same
+sort(table(airbnb$property_type)) == sort(cut_table)
+
+# Median Property Type Price
+sorted_property = reorder(airbnb$property_type, airbnb$price, FUN = median)
+
+# Lowest to Highest Priced Property Types
+ggplot(airbnb, aes(x = sorted_property, y = price, fill = sorted_property)) + geom_boxplot() + labs(y = "Price", fill = "Property Type", title="Figure 3: Property Type Pricing") + theme_classic() + theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) + scale_fill_manual(values = create_colour("YlGn", length(levels(airbnb$property_type)))) + coord_cartesian(ylim = c(0, 2000))
+
+# Percentage of Property Types
+ggplot(airbnb, aes(x = sorted_property, fill = sorted_property, label=paste(round(..count../sum(..count..)*100, 1), "%", sep=""))) + geom_bar() + theme_classic() + theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) + scale_fill_manual(values = create_colour("YlGn", length(levels(airbnb$property_type)))) + geom_text(stat = 'count', position = position_dodge(.9), vjust = -0.5, size = 3) + labs(fill = "Property Type", title="Figure 4: Total Property Type Composition", y = "Count")
+```
+
+**Summary: Property type does not affect listing price.** 
+
+Although an upward scale of median price can be determined according to **figure 3**, the volatility of low and high quartiles indicates a lack of support for a consistent trend. Furthermore, looking at **figure 4**, the lack of equal diversity (with apartments taking up a staggering 60% share) leaves any drawn conclusions lacking sufficient evidence and questionable at best.
+
+*Note: Some interesting property types found included a bus, cave, a couple islands, two trains and a plane.*
+
+<br>
+
+### Room Type
+
+```{r, results='hide', warning=FALSE, echo=FALSE}
+check_var(airbnb$room_type)
+
+airbnb$room_type = factor(airbnb$room_type, levels = c("Shared room", "Private room", "Hotel room", "Entire home/apt"))
+
+# Room Type Pricing
+ggplot(airbnb, aes(x = room_type, y = price, fill = room_type)) + geom_boxplot() + labs(y = "Price", x = "Room Type") + theme_classic() + scale_fill_manual(values = create_colour("YlGn", length(levels(airbnb$room_type)))) + coord_cartesian(ylim = c(0, 600)) + ggtitle("Figure 5: Room Type Pricing") + theme(legend.position = "none")
+
+# Suburbs and Room Type
+ggplot(airbnb, aes(x = sorted_neighbourhoods, fill = room_type)) + geom_bar(position="fill") + labs(x = "hello") + theme_classic() + ggtitle("Figure 6: Room Type Composition of Suburbs in Ascending Price Order") + theme(axis.ticks.x=element_blank()) + scale_y_continuous(labels=scales::percent) + labs(y = "Room Type Percentage", x = "Lowest to Highest Priced Suburbs", fill = "Room Type") + scale_fill_manual(values = create_colour("YlGn", length(levels(airbnb$room_type)))) + scale_x_discrete(labels = c("Lowest Priced", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "Highest Priced"))
+# Brute forced this effect (it's dumb but it works and thats okay)
+```
+
+**Summary: Advertising a room type as 'Entire home/apt' displays a very strong correlation to higher listing price.**
+
+Room Type has a much clearer association, with a linear trend of higher priced suburbs providing the more expensive 'entire homes/apartments' option, rather than the cheaper 'private room' (although this fact shouldn't be a surprise to anyone).
+
+<br>
+
+### Accommodation Size
+
+```{r, results='hide', warning=FALSE, message=FALSE, echo=FALSE}
+ggplot(airbnb, aes(x=as.factor(accommodates), y=price, fill=as.factor(accommodates))) + geom_boxplot() + theme_classic() + coord_cartesian(ylim=c(0, 2000)) + stat_summary(fun.y=mean, geom="line", aes(group=1))+ stat_summary(fun.y=mean, geom="point") + theme(legend.position = "none") + scale_fill_manual(values = create_colour("RdBu", 16, T)) + ggtitle("Figure 7: Accommodation Size Pricing") + labs(y = "Price", x = "Accommodation Size")
+
+ggplot(airbnb, aes(x=accommodates, y=price)) + geom_count(aes(color = ..n..)) + geom_smooth(method="lm", color="red", fill="green") + theme_classic() + ylim(0, 1500) + xlim(1, 8) + scale_color_gradient(low = "blue", high = "red", limits=c(40, 1200)) + scale_size_area(limits=c(10, 1200)) + stat_ellipse(type = "norm", color="blue", linetype = 2) + ggtitle("Figure 8: Accommodation Size Pricing Trend") + stat_cor(label.x = 1, label.y = 700) + stat_regline_equation(label.x = 1, label.y = 800) + labs(y = "Price", x = "Accommodation Size") + geom_quantile()
+
+temp = filter(airbnb, accommodates<=8)
+sorted_temp = reorder(temp$neighbourhood_cleansed, temp$price, FUN = median)
+
+ggplot(temp, aes(x = sorted_temp, fill = as.factor(accommodates))) + geom_bar(position="fill") + theme_classic() + theme(axis.ticks.x=element_blank()) + scale_y_continuous(labels=scales::percent) + labs(y = "Accommodation Composition", x = "Lowest to Highest Priced Suburbs", fill = "Accommodation Size", title="Figure 9: Room Type Composition of Suburbs in Ascending Price Order") + scale_fill_manual(values = create_colour("YlGn", 9)) + scale_x_discrete(labels = c("Lowest Priced", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "Highest Priced"))
+
+#cor(x=(airbnb$accommodates[airbnb$price < 2000 & airbnb$accommodates < 10]), y=airbnb$price[airbnb$price < 2000 & airbnb$accommodates < 10])
+```
+
+**Summary: Accommodation size is moderately related to listing price, with a consistent linear increase peaking at a size of 8.**
+
+**Figure 7** suggests accommodation size rises linearly (or potentially exponentially) with price until 8, where the volatility increases and prices start to seem erratic. This phenomenon is most likely due to the mixing of properties which are larger (meaning higher cost), and properties which house many separate customers in shared rooms (such as hostels or backpackers, which are commonly cheap), leading to this wide range of lows and highs.
+
+Nonetheless, as seen in **figure 8**, the more stable rise in price seen below accommodation size of 8 can be predicted as $y=58x-6.9$, where $x$ is accommodation size. This trend results in a 0.61 correlation coefficient, and therefore makes accommodation a likely factor in increased price; **figure 9** corroborates with this notion, displaying a linear increase in more expensive accommodation sizes, from lower to higher priced suburbs.
+
+<br>
+
+## Listing Quality
+
+<br>
+
+### Amenity Count
+
+```{r, results='hide', warning=FALSE, message=FALSE, echo=FALSE}
+# mutate(airbnb, amenities_count=length(as.list(strsplit(toString(airbnb$amenities[random_no]), ",")[[1]])))
+# Function above kept loading forever, so I made a makeshift function...
+for (i in 1:dim(airbnb)[1]) {
+  airbnb$amenities_count[i] = length(as.list(strsplit(toString(airbnb$amenities[i]), ",")[[1]]))
+  print(paste(i, airbnb$amenities_count[i])) # Progress Bar
+}
+
+# Check if accurate with random entry
+random_no = round(runif(1, 1, dim(airbnb)))
+airbnb$amenities_count[random_no] == length(as.list(strsplit(toString(airbnb$amenities[random_no]), ",")[[1]]))
+
+# Prediction model for minimum price
+model = function(x) ifelse(x >= 1, 0.8*exp(0.07*x)+10, NA)
+
+# Box heat map
+ggplot(airbnb, aes(x=amenities_count, y=price)) + geom_bin2d(aes(fill = ..count..)) + theme_classic() + ylim(0, 600) + xlim(1, 100) + scale_fill_gradient(low="yellow", high="red", limits=c(37, 1100)) + stat_function(fun = model, color="lightblue", size = 1) + labs(title = "Figure 10: Amenities and Price Heatmap", x = "Amenities Count", y = "Price")
+
+# Big picture prediction model - w/ scaled inverse function
+ggplot(airbnb, aes(x=amenities_count, y=price)) + geom_count(aes(color = ..n..)) + theme_classic() + ylim(0, 15000) + xlim(1, 101) + scale_size_area(max_size=1, limits=c(1, 100)) + scale_color_gradient(low="blue", high="red") + stat_function(geom="area", alpha=0.4, fill="lightblue", fun = function(x) 14000*exp(-(x-25)^2/500)+1000) + stat_function(geom="area", alpha=0.1, fill="blue", fun = function(x) 4000*exp(-(x-25)^2/500)+1000) + stat_function(geom="area", alpha=0.1, fill="red", fun = function(x) 1500*exp(-(x-25)^2/500)+1000) + stat_function(geom="area", fill="white", fun = model) + ggtitle("Figure 11: Amenities and Price (Big Picture Model)") + labs(x="Amenities Count", y="Price")
+```
+<div align="center">
+<img src="figure10.jpg" width="50%" height="50%">
+</div>
+```{r, results='hide', warning=FALSE, message=FALSE, echo=FALSE}
+ggplot(airbnb, aes(x=amenities_count)) + geom_histogram(aes(y=..density.., fill=..x..), binwidth=6, show.legend = FALSE) + stat_function(size=1.5, color="#90f1ef", fun = dnorm, args = list(mean(airbnb$amenities_count), sd(airbnb$amenities_count))) + scale_fill_gradient(low="#ffd6e0", high="#8338ec") + labs(title = "Figure 12: Amenities Normal Distribution", x = "Amenities Count", y = "Density") + theme_classic()
+```
+
+**Summary: Amenities do not affect listing prices. An abundance of amenities (over 50 for a significant difference) connects to a small increase of the expected minimum price of a listing.**
+
+**Figure 10** portrays a grid-like pattern phenomenon, which is most likely caused by the human bias to lean towards price numbers with less significant figures; owners more commonly list their prices at intervals of either 10s or 100s, with larger intervals being more common at higher prices. 
+
+As the darker section resembles a square, a linear model would not be very suitable as there is no significant increase in price activity, and thus shows little evidence to support a connection to increased price. This goes against past research, with Wang and Nicolau including amenities as one of five price determinant categories [4], and multiple articles relating amenities to hotel price [1][3]. This is likely due to customers being happy with the bare essentials of amenities, with any extras being more of an afterthought. Nevertheless, the **minimum** listing price in regards to amenities shows a weak, yet consistent exponential trend. This trend can be calculated as $y=0.8e^{0.07x}+10$.
+
+Extrapolating the data (**figure 11**), a maximum value can also be seen and predicted, with a standard deviation of varying heights calculated as $y=(h-1000)e^{\frac{{x-25}^2}{500}}+1000$, where $h$ is adjustable (depending on data percentile dealt with).
+
+Nonetheless, the existence of the maximum height standard deviation is most likely due to the amenities count normal distribution as seen in **figure 12**, with their normal curves matching very closely; with more listings near the peak, extreme prices would be more likely to occur as seen in **figure 11**. Despite this, the same does not apply to the minimum cost rise as if the previous claim was true, listings would stick closer to the majority (being lower), and not rise systematically (**figure 10**).
+
+<br>
+
+### Ratings
+A generalised rating score was created to simplify graphs and simultaneously increase value range. This score was calculated as $Score=\frac{R+\frac{5}{3}\sum{r}}{2}$, where $R$ was the general rating, and $r$ were the miscellaneous ratings.
+
+```{r, results='hide', warning=FALSE, message=FALSE, echo=FALSE}
+check_var(airbnb$review_scores_rating)
+
+# Overall Rating
+for (i in 1:dim(airbnb)[1]) {
+  airbnb$avg_score[i] = ((5/3)*(airbnb$review_scores_accuracy[i] + airbnb$review_scores_checkin[i] + airbnb$review_scores_cleanliness[i] + airbnb$review_scores_communication[i] + airbnb$review_scores_location[i] + airbnb$review_scores_value[i]) + airbnb$review_scores_rating[i])/2
+  print(paste(i/dim(airbnb)[1], airbnb$avg_score[i])) # Progress Bar
+}
+
+# Convert NA to -1
+airbnb$avg_score = replace(airbnb$avg_score, is.na(airbnb$avg_score), -1)
+
+# Heat Map
+ggplot(airbnb, aes(x=avg_score, y=price)) + geom_bin2d(aes(fill = ..count..)) + theme_classic() + ylim(0, 5000) + scale_fill_gradient(low="blue", high="red") + stat_function(size=1, color="green", fun = function(x) ifelse(x >= 16, 50*exp(0.058*(x-25))+500, NA)) + labs(title = "Figure 12: Rating Score and Price Heatmap", x="Rating Score", y="Price")
+
+# Normal Distribution
+ggplot(airbnb, aes(x=avg_score)) + geom_histogram(aes(y=..density.., fill=..x..), binwidth=10, show.legend = FALSE) + theme_classic() + stat_function(size=1.5, color="#457b9d", fun = dnorm, args = list(100, sd(airbnb$avg_score[airbnb$avg_score != -1]))) + scale_fill_gradient(low="#5e6472", high="#06d6a0") + labs(title = "Figure 13: Rating Scores Amongst Listings", x = "Rating Score", y = "Density")
+
+# Average Score per Suburb
+mean_scores = c()
+for (i in 1:length(levels(sorted_neighbourhoods))) {
+  mean_scores[i] = mean(filter(airbnb, avg_score != -1, neighbourhood_cleansed == levels(sorted_neighbourhoods)[i])$avg_score)
+}
+random_no = round(runif(1, 1, length(levels(sorted_neighbourhoods))))
+mean_scores[random_no] == mean(filter(airbnb, avg_score != -1, neighbourhood_cleansed == levels(sorted_neighbourhoods)[random_no])$avg_score)
+
+suburb_scores = data.frame(mean_scores)
+suburb_scores$suburb = factor(as.factor(levels(sorted_neighbourhoods)), levels = levels(sorted_neighbourhoods))
+length(mean_scores) == length(levels(sorted_neighbourhoods))
+
+ggplot(suburb_scores, aes(x=suburb, y=mean_scores, fill=suburb)) + geom_bar(stat="identity", show.legend = FALSE) + theme_classic() + theme(axis.ticks.x=element_blank()) + scale_x_discrete(labels = c("Lowest Priced", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "Highest Priced", "", "", "")) + labs(title="Figure 14: Average Rating Score of Suburbs in Ascending Price Order", x="Lowest to Highest Priced Suburb", y="Rating Score") + scale_fill_manual(values = create_colour("YlGn", dim(suburb_scores)[1]))
+```
+
+**Summary: Ratings carry little to no connection to listing price. Nonetheless, there is evidence to support higher ratings increasing the maximum potential listing prices accepted.**
+
+**Figure 12** at an immediate glance displays higher prices scaling exponentially with higher ratings, note however that the heatmap is still very clustered near the bottom, with the rise in blue colour only indicating a rise of **maximum** price, and doesn't reflect on the majority of results. 
+
+Another observation is unrated listings (shown on the very left of **figure 12**) showing little difference to those on the very right side of reviews, which leads to two possibilities: either the majority of the listings are highly rated, thus skewing the potential price range, **OR**, airbnb removes listings with low reviews and inflated prices.
+
+**Figure 13** shows the former is likely the case; a lack of cases being less likely to include extreme prices. Nonetheless, this does not disprove the claim that airbnb removes listings with low reviews, as in a natural environment, lower reviews should be more likely to occur than **figure 13** indicates. If the latter is true, rating would directly affect the level of a maximum price.
+
+**Figure 14** shows little to no evidence of a relation between ratings and listing price, at best displaying a weak correlation, far weaker than previously discussed factors; likely to be the result of customers simply being satisfied with cheaper options, reducing any potential gap between low and higher priced listings. This claim surprisingly goes against instincts (although makes sense in hindsight) as well as past research, which suggests review rating scores being "significantly connected with the Airbnb listing price" [5]. This is likely due to customers being satisfied with properties regardless of if they are highly priced, thus, giving no traction to an upward trend.
+
+<br>
+
+<br>
+
+# References
+
+1. Masiero, L.; Nicolau, J.L.; Law, R. A demand-driven analysis of tourist accommodation price: A quantileregression of room bookings. Int. J. Hosp. Manag. 2015,50, 1–8.
+
+2. Pashaj, L. (2018). Airbnb Pricing Strategy - How to Maximise Your Revenue. Retrieved from https://rentalsunited.com/blog/airbnb-pricing-strategy/
+
+3. Schamel, G. Weekend vs. midweek stays: Modelling hotel room rates in a small market. Int. J. Hosp. Manag.2012,31, 1113–1118.
+
+4. Wang, D.; Nicolau, J.L. Price determinants of sharing economy based accommodation rental: A study oflistings from 33 cities on Airbnb.com. Int. J. Hosp. Manag. 2017,62, 120–131.
+
+5. Zhang, Zhihua & Chen, Rachel & Han, Lee & Yang, Lu. (2017). Key Factors Affecting the Price of Airbnb Listings: A Geographically Weighted Approach. Sustainability. 9. 1635. 10.3390/su9091635. 
